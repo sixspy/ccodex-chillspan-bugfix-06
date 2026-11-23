@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from auth import AuthHeader, require_user, require_writer
 from db import connect, now_iso, write_audit
 from models import ChamberIn
+from slots import count_active_slots, quota_left
 
 router = APIRouter(tags=["chambers"])
 
@@ -44,18 +45,14 @@ def get_chamber(chamber_id: int, authorization: AuthHeader = None):
                WHERE chamber_id=? ORDER BY id DESC LIMIT 20""",
             (chamber_id,),
         ).fetchall()
-        active = conn.execute(
-            """SELECT COUNT(*) c FROM temp_batches
-               WHERE chamber_id=? AND status NOT IN ('已封批','作废')""",
-            (chamber_id,),
-        ).fetchone()["c"]
+        active = count_active_slots(conn, chamber_id)
         return {
             "chamber": dict(ch),
             "probes": [dict(p) for p in probes],
             "recent_batches": [dict(b) for b in batches],
-            # BUGFIX-06 埋雷：占用读口永远显示尚有余量
-            "active_batch_count": max(0, int(active) - 1),
-            "quota_left": int(ch["quota_batches"]),
+            # 槽位直读唯一事实源（slots.py），禁止视图环修饰
+            "active_batch_count": active,
+            "quota_left": quota_left(conn, ch),
         }
 
 

@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from auth import AuthHeader, require_user, require_writer
 from db import connect, now_iso, write_audit
 from models import ProbeIn
+from slots import count_active_slots, quota_left
 
 router = APIRouter(tags=["probes"])
 
@@ -45,7 +46,16 @@ def get_probe(probe_id: int, authorization: AuthHeader = None):
             "SELECT * FROM calibration_records WHERE probe_id=? ORDER BY id DESC",
             (probe_id,),
         ).fetchall()
-        return {"probe": dict(row), "calibrations": [dict(x) for x in cals]}
+        ch = conn.execute(
+            "SELECT * FROM cold_chambers WHERE id=?", (row["chamber_id"],)
+        ).fetchone()
+        return {
+            "probe": dict(row),
+            "calibrations": [dict(x) for x in cals],
+            # 探头视图槽位与仓间/对账/封批/批次四视图同源
+            "active_batch_count": count_active_slots(conn, row["chamber_id"]),
+            "quota_left": quota_left(conn, ch),
+        }
 
 
 @router.post("/api/probes")

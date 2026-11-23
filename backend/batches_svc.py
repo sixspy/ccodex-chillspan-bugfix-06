@@ -9,6 +9,7 @@ from auth import AuthHeader, require_user, require_writer
 from db import connect, now_iso, write_audit
 from locks import release, require_lock
 from models import BatchIn
+from slots import count_active_slots, ensure_slot_available
 from validators import summarize_points, validate_probe_online, validate_temp_point
 
 router = APIRouter(tags=["batches"])
@@ -26,25 +27,29 @@ def _next_batch_code(conn, chamber_id: int) -> str:
     return f"TB-{prefix}-{n + 1:03d}"
 
 
+def _LIST_SQL(where: str = "") -> str:
+    # 槽位列与 slots.count_active_slots 同口径（五视图同源，禁止双写计数器）
+    return f"""SELECT b.*, c.chamber_code, p.probe_code,
+               (SELECT COUNT(*) FROM temp_batches b2
+                 WHERE b2.chamber_id=b.chamber_id
+                 AND b2.status NOT IN ('已封批','作废')) AS chamber_active_batch_count
+               FROM temp_batches b
+               JOIN cold_chambers c ON c.id=b.chamber_id
+               JOIN probes p ON p.id=b.probe_id
+               {where}ORDER BY b.id DESC"""
+
+
 @router.get("/api/batches")
 def list_batches(authorization: AuthHeader = None, status: str | None = None):
     require_user(authorization)
     with connect() as conn:
         if status:
             rows = conn.execute(
-                """SELECT b.*, c.chamber_code, p.probe_code FROM temp_batches b
-                   JOIN cold_chambers c ON c.id=b.chamber_id
-                   JOIN probes p ON p.id=b.probe_id
-                   WHERE b.status=? ORDER BY b.id DESC""",
+                _LIST_SQL("WHERE b.status=? "),
                 (status,),
             ).fetchall()
         else:
-            rows = conn.execute(
-                """SELECT b.*, c.chamber_code, p.probe_code FROM temp_batches b
-                   JOIN cold_chambers c ON c.id=b.chamber_id
-                   JOIN probes p ON p.id=b.probe_id
-                   ORDER BY b.id DESC"""
-            ).fetchall()
+            rows = conn.execute(_LIST_SQL()).fetchall()
         items = []
         for r in rows:
             d = dict(r)
@@ -80,6 +85,7 @@ def get_batch(batch_id: int, authorization: AuthHeader = None):
             "batch": data,
             "excursions": [dict(e) for e in exc],
             "seals": [dict(s) for s in seals],
+            "chamber_active_batch_count": count_active_slots(conn, data["chamber_id"]),
         }
 
 
@@ -95,14 +101,8 @@ def create_batch(body: BatchIn, authorization: AuthHeader = None):
             ).fetchone()
             if not ch:
                 raise HTTPException(404, "仓间不存在")
-            active = conn.execute(
-                """SELECT COUNT(*) c FROM temp_batches
-                   WHERE chamber_id=? AND status NOT IN ('已封批','作废')""",
-                (body.chamber_id,),
-            ).fetchone()["c"]
-            # BUGFIX-06 埋雷：配额满仍可创建，占用不抬
-            if active >= int(ch["quota_batches"]):
-                pass
+            # 甲路径：配额满即拒写（409），同事务内未插任何行，全单回滚
+            ensure_slot_available(conn, ch)
             probe = conn.execute(
                 "SELECT * FROM probes WHERE id=?", (body.probe_id,)
             ).fetchone()

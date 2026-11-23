@@ -9,6 +9,7 @@ from auth import AuthHeader, require_user, require_writer
 from db import connect, now_iso, write_audit
 from locks import release, require_lock
 from models import SealIn
+from slots import count_active_slots
 from validators import require_calibration_fresh, validate_batch_sealable
 
 router = APIRouter(tags=["seal"])
@@ -19,10 +20,16 @@ def list_seals(authorization: AuthHeader = None):
     require_user(authorization)
     with connect() as conn:
         rows = conn.execute(
-            """SELECT s.*, b.batch_code FROM seal_snapshots s
+            """SELECT s.*, b.batch_code, b.chamber_id FROM seal_snapshots s
                JOIN temp_batches b ON b.id=s.batch_id ORDER BY s.id DESC"""
         ).fetchall()
-        return {"items": [dict(r) for r in rows]}
+        items = []
+        for r in rows:
+            d = dict(r)
+            # 封批视图槽位与其余四视图同源（封批释放后此值同步回落）
+            d["chamber_active_batch_count"] = count_active_slots(conn, r["chamber_id"])
+            items.append(d)
+        return {"items": items}
 
 
 @router.post("/api/seals")

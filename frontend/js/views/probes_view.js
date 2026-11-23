@@ -31,7 +31,7 @@ export const probesViewTemplate = `
   </table>
   <div v-if="probeDetail" class="detail-box">
     <h3>探头 {{ probeDetail.probe.probe_code }}</h3>
-    <p>目标温区 {{ probeDetail.probe.target_min }}~{{ probeDetail.probe.target_max }}℃</p>
+    <p>目标温区 {{ probeDetail.probe.target_min }}~{{ probeDetail.probe.target_max }}℃ · 同仓在批槽位 {{ probeDetail.active_batch_count }} · 剩余配额 {{ probeDetail.quota_left }}</p>
     <ul><li v-for="c in probeDetail.calibrations" :key="c.id">{{ c.calibrated_at }} 偏移 {{ c.offset_c }}℃ 至 {{ c.valid_until }}</li></ul>
   </div>
 </section>

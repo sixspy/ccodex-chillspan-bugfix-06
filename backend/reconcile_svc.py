@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 
 from auth import AuthHeader, require_user
 from db import connect
+from slots import count_active_slots
 
 router = APIRouter(tags=["reconcile"])
 
@@ -12,11 +13,7 @@ router = APIRouter(tags=["reconcile"])
 def _chamber_recon(conn, chamber) -> dict:
     cid = chamber["id"]
     quota = int(chamber["quota_batches"])
-    active = conn.execute(
-        """SELECT COUNT(*) c FROM temp_batches
-           WHERE chamber_id=? AND status NOT IN ('已封批','作废')""",
-        (cid,),
-    ).fetchone()["c"]
+    active = count_active_slots(conn, cid)
     sealed = conn.execute(
         """SELECT COUNT(*) c FROM temp_batches
            WHERE chamber_id=? AND status='已封批'""",

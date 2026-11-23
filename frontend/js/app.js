@@ -131,6 +131,21 @@ createApp({
       batches.value.filter((b) => b.status === "已封批")
     );
 
+    // 前端槽位口径与 backend/slots.py 完全一致：
+    // status NOT IN ('已封批','作废') 的批次数；五视图同源，不另立计数器。
+    const SLOT_EXCLUDED = new Set(["已封批", "作废"]);
+    const chamberSlotMap = computed(() => {
+      const m = new Map();
+      for (const b of batches.value) {
+        if (SLOT_EXCLUDED.has(b.status)) continue;
+        m.set(b.chamber_id, (m.get(b.chamber_id) || 0) + 1);
+      }
+      return m;
+    });
+    function chamberSlotOf(chamberId) {
+      return chamberSlotMap.value.get(chamberId) || 0;
+    }
+
     function fmtTemp(n) {
       if (n === null || n === undefined || n === "") return "—";
       return Number(n).toFixed(1) + "℃";
@@ -494,6 +509,8 @@ createApp({
       openableBatches,
       sealableBatches,
       sealedBatches,
+      chamberSlotMap,
+      chamberSlotOf,
       login,
       logout,
       refresh,
